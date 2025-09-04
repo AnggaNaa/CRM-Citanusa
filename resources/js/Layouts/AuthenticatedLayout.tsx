@@ -371,8 +371,8 @@ export default function AuthenticatedLayout({ children, header, user }: Authenti
                                     {currentUser?.profile_picture ? (
                                         <img
                                             className="h-10 w-10 rounded-full object-cover"
-                                            src={`/storage/${user.profile_picture}`}
-                                            alt={user.name}
+                                            src={`/storage/${user?.profile_picture}`}
+                                            alt={user?.name}
                                         />
                                     ) : (
                                         <UserCircleIcon className="h-8 w-8 text-gray-400" />
