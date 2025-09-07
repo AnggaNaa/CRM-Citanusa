@@ -62,6 +62,9 @@ export interface Lead {
     updated_at: string;
     histories?: LeadHistory[];
     attachments?: LeadAttachment[];
+
+    creator?: User;
+    assigned_user?: User;
 }
 
 export interface LeadHistory {
@@ -72,6 +75,8 @@ export interface LeadHistory {
     description: string;
     created_by: User;
     created_at: string;
+    creator?: User;
+    assigned_user?: User;
 }
 
 export interface LeadAttachment {

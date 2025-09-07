@@ -313,7 +313,7 @@ export default function Edit({ auth, lead, availableUsers, priorities, leadSourc
                                             <option value="">Unassigned</option>
                                             {availableUsers.map((user) => (
                                                 <option key={user.id} value={user.id}>
-                                                    {user.name} ({user.roles?.join(', ')})
+                                                    {user.name}
                                                 </option>
                                             ))}
                                         </select>

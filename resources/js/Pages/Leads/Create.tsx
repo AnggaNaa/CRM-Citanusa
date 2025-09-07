@@ -19,7 +19,7 @@ export default function Create({ auth, availableUsers, priorities, leadSources, 
 
     const { data, setData, post, processing, errors } = useForm<LeadFormData>({
         description: '',
-        priority: 'cold' as const,
+        priority: 'Cold' as const,
         status: '',
         notes: '',
         project: '',
@@ -301,7 +301,7 @@ export default function Create({ auth, availableUsers, priorities, leadSources, 
                                             <option value="">Unassigned</option>
                                             {availableUsers.map((user) => (
                                                 <option key={user.id} value={user.id}>
-                                                    {user.name} ({user.roles?.join(', ')})
+                                                    {user.name}
                                                 </option>
                                             ))}
                                         </select>

@@ -198,11 +198,11 @@ export default function Show({ lead }: Props) {
                                 <div className="space-y-3">
                                     <div>
                                         <dt className="text-sm font-medium text-gray-500">Assigned To</dt>
-                                        <dd className="text-sm text-gray-900">{lead.assigned_to?.name || 'Unassigned'}</dd>
+                                        <dd className="text-sm text-gray-900">{lead?.assigned_user?.name || 'Unassigned'}</dd>
                                     </div>
                                     <div>
                                         <dt className="text-sm font-medium text-gray-500">Created By</dt>
-                                        <dd className="text-sm text-gray-900">{lead.created_by.name}</dd>
+                                        <dd className="text-sm text-gray-900">{lead?.creator?.name}</dd>
                                     </div>
                                     {lead.manager && (
                                         <div>
@@ -251,7 +251,7 @@ export default function Show({ lead }: Props) {
                                                             <div className="flex items-center text-xs text-gray-500">
                                                                 <span className="font-medium">By</span>
                                                                 <span className="ml-1 text-gray-700 font-medium">
-                                                                    {history.created_by?.name || 'Unknown'}
+                                                                    {history.creator?.name || 'Unknown'}
                                                                 </span>
                                                             </div>
                                                         </div>
