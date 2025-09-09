@@ -1,8 +1,7 @@
 import { Head } from '@inertiajs/react';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { PageProps } from '@/types';
-import { useState, useEffect } from 'react';
-import { router } from '@inertiajs/react';
+import { useState, useEffect, useRef } from 'react';
 import {
     ChartBarIcon,
     UserGroupIcon,
@@ -13,6 +12,8 @@ import {
     PresentationChartLineIcon,
     ClockIcon,
     FireIcon,
+    Squares2X2Icon,
+    TableCellsIcon,
 } from '@heroicons/react/24/outline';
 
 interface LeadStatistics {
@@ -111,6 +112,9 @@ export default function Index({
 }: Props) {
     const [isFilterOpen, setIsFilterOpen] = useState(false);
     const [isExportOpen, setIsExportOpen] = useState(false);
+    const [viewMode, setViewMode] = useState<'table' | 'chart'>('table');
+    const [googleChartsLoaded, setGoogleChartsLoaded] = useState(false);
+    const chartRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
     const [formData, setFormData] = useState({
         date_from: filters.date_from,
         date_to: filters.date_to,
@@ -128,6 +132,46 @@ export default function Index({
         formData
     });
 
+    // Load Google Charts
+    useEffect(() => {
+        const loadGoogleCharts = () => {
+            if (typeof window !== 'undefined' && !(window as any).google) {
+                const script = document.createElement('script');
+                script.src = 'https://www.gstatic.com/charts/loader.js';
+                script.onload = () => {
+                    (window as any).google.charts.load('current', { packages: ['corechart', 'bar'] });
+                    (window as any).google.charts.setOnLoadCallback(() => {
+                        setGoogleChartsLoaded(true);
+                    });
+                };
+                document.head.appendChild(script);
+            } else if ((window as any).google && (window as any).google.charts) {
+                setGoogleChartsLoaded(true);
+            }
+        };
+
+        loadGoogleCharts();
+    }, []);
+
+    // Draw charts when data changes or view mode changes
+    useEffect(() => {
+        if (googleChartsLoaded && viewMode === 'chart') {
+            // Clear first to prevent overlap
+            clearCharts();
+            setTimeout(() => drawCharts(), 100);
+        } else if (viewMode === 'table') {
+            // Clear charts when switching to table view
+            clearCharts();
+        }
+    }, [googleChartsLoaded, viewMode, leadStats, dailyTrends, statusDistribution, userPerformance]);
+
+    // Additional effect to ensure charts are cleared on view mode change
+    useEffect(() => {
+        if (viewMode === 'table') {
+            clearCharts();
+        }
+    }, [viewMode]);
+
     // Close export dropdown when clicking outside
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
@@ -141,6 +185,24 @@ export default function Index({
             document.removeEventListener('mousedown', handleClickOutside);
         };
     }, [isExportOpen]);
+
+    // Handle window resize for chart responsiveness
+    useEffect(() => {
+        const debouncedDrawCharts = debounce(() => {
+            if (googleChartsLoaded && viewMode === 'chart') {
+                drawCharts();
+            }
+        }, 300);
+
+        const handleResize = () => {
+            debouncedDrawCharts();
+        };
+
+        window.addEventListener('resize', handleResize);
+        return () => {
+            window.removeEventListener('resize', handleResize);
+        };
+    }, [googleChartsLoaded, viewMode, leadStats, dailyTrends, statusDistribution, userPerformance]);
 
     const handleFilterSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -278,6 +340,208 @@ export default function Index({
         return colors[status] || 'bg-gray-100 text-gray-800';
     };
 
+    const clearCharts = () => {
+        // Clear all chart containers and remove Google Charts instances
+        Object.keys(chartRefs.current).forEach(key => {
+            const chartContainer = chartRefs.current[key];
+            if (chartContainer) {
+                // Clear the container content
+                chartContainer.innerHTML = '';
+                // Force clear any Google Charts instances
+                if ((window as any).google && (window as any).google.visualization) {
+                    try {
+                        const chart = chartContainer.querySelector('div');
+                        if (chart) {
+                            chart.remove();
+                        }
+                    } catch (e) {
+                        // Ignore errors during cleanup
+                    }
+                }
+            }
+        });
+
+        // Force a small delay to ensure DOM is updated
+        setTimeout(() => {
+            Object.keys(chartRefs.current).forEach(key => {
+                const chartContainer = chartRefs.current[key];
+                if (chartContainer && chartContainer.children.length > 0) {
+                    chartContainer.innerHTML = '';
+                }
+            });
+        }, 50);
+    };
+
+    // Debounce function for performance optimization
+    const debounce = (func: Function, wait: number) => {
+        let timeout: ReturnType<typeof setTimeout>;
+        return function executedFunction(...args: any[]) {
+            const later = () => {
+                clearTimeout(timeout);
+                func(...args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
+    };
+
+    const drawCharts = () => {
+        if (!googleChartsLoaded || !(window as any).google) return;
+
+        const google = (window as any).google;
+
+        // Lead Statistics Pie Chart
+        if (chartRefs.current.leadStatsChart) {
+            const leadData = google.visualization.arrayToDataTable([
+                ['Priority', 'Count'],
+                ['Hot Leads', leadStats.hot_leads],
+                ['Warm Leads', leadStats.warm_leads],
+                ['Cold Leads', leadStats.cold_leads],
+                ['Booking', leadStats.booking_leads],
+                ['Closing', leadStats.closing_leads],
+                ['Lost', leadStats.lost_leads]
+            ]);
+
+            const leadOptions = {
+                title: 'Lead Distribution by Priority',
+                titleTextStyle: { fontSize: window.innerWidth < 640 ? 12 : 16, bold: true },
+                pieHole: 0.3,
+                colors: ['#DC2626', '#F59E0B', '#60A5FA', '#F97316', '#10B981', '#6B7280'],
+                chartArea: {
+                    width: window.innerWidth < 640 ? '85%' : '90%',
+                    height: window.innerWidth < 640 ? '75%' : '80%'
+                },
+                legend: {
+                    position: window.innerWidth < 640 ? 'bottom' : 'bottom',
+                    alignment: 'center',
+                    textStyle: { fontSize: window.innerWidth < 640 ? 10 : 12 }
+                },
+                backgroundColor: 'transparent'
+            };
+
+            const leadChart = new google.visualization.PieChart(chartRefs.current.leadStatsChart);
+            leadChart.draw(leadData, leadOptions);
+        }
+
+        // Daily Trends Line Chart
+        if (chartRefs.current.dailyTrendsChart && dailyTrends.length > 0) {
+            const trendsData = google.visualization.arrayToDataTable([
+                ['Date', 'New Leads', 'Closing', 'Booking'],
+                ...dailyTrends.map(trend => [
+                    trend.formatted_date,
+                    trend.leads,
+                    trend.closing,
+                    trend.booking
+                ])
+            ]);
+
+            const trendsOptions = {
+                title: 'Daily Lead Trends',
+                titleTextStyle: { fontSize: window.innerWidth < 640 ? 12 : 16, bold: true },
+                curveType: 'function',
+                legend: {
+                    position: 'bottom',
+                    textStyle: { fontSize: window.innerWidth < 640 ? 10 : 12 }
+                },
+                chartArea: {
+                    width: window.innerWidth < 640 ? '80%' : '85%',
+                    height: window.innerWidth < 640 ? '65%' : '70%'
+                },
+                colors: ['#3B82F6', '#10B981', '#F97316'],
+                backgroundColor: 'transparent',
+                hAxis: {
+                    title: window.innerWidth < 640 ? '' : 'Date',
+                    titleTextStyle: { fontSize: window.innerWidth < 640 ? 10 : 12 },
+                    textStyle: { fontSize: window.innerWidth < 640 ? 8 : 10 }
+                },
+                vAxis: {
+                    title: window.innerWidth < 640 ? '' : 'Count',
+                    titleTextStyle: { fontSize: window.innerWidth < 640 ? 10 : 12 },
+                    textStyle: { fontSize: window.innerWidth < 640 ? 8 : 10 }
+                }
+            };
+
+            const trendsChart = new google.visualization.LineChart(chartRefs.current.dailyTrendsChart);
+            trendsChart.draw(trendsData, trendsOptions);
+        }
+
+        // Status Distribution Column Chart
+        if (chartRefs.current.statusDistChart && statusDistribution.length > 0) {
+            const statusData = google.visualization.arrayToDataTable([
+                ['Status', 'Count'],
+                ...statusDistribution.map(status => [status.label, status.count])
+            ]);
+
+            const statusOptions = {
+                title: 'Lead Status Distribution',
+                titleTextStyle: { fontSize: window.innerWidth < 640 ? 12 : 16, bold: true },
+                chartArea: {
+                    width: window.innerWidth < 640 ? '80%' : '85%',
+                    height: window.innerWidth < 640 ? '65%' : '70%'
+                },
+                colors: ['#3B82F6'],
+                backgroundColor: 'transparent',
+                hAxis: {
+                    title: window.innerWidth < 640 ? '' : 'Status',
+                    titleTextStyle: { fontSize: window.innerWidth < 640 ? 10 : 12 },
+                    textStyle: { fontSize: window.innerWidth < 640 ? 8 : 10 }
+                },
+                vAxis: {
+                    title: window.innerWidth < 640 ? '' : 'Count',
+                    titleTextStyle: { fontSize: window.innerWidth < 640 ? 10 : 12 },
+                    textStyle: { fontSize: window.innerWidth < 640 ? 8 : 10 }
+                },
+                legend: { position: 'none' }
+            };
+
+            const statusChart = new google.visualization.ColumnChart(chartRefs.current.statusDistChart);
+            statusChart.draw(statusData, statusOptions);
+        }
+
+        // User Performance Bar Chart
+        if (chartRefs.current.userPerfChart && userPerformance.length > 0) {
+            const userPerfData = google.visualization.arrayToDataTable([
+                ['User', 'Total Leads', 'Closing', 'Booking'],
+                ...userPerformance.slice(0, 10).map(user => [
+                    user.name.split(' ')[0], // First name only for better readability
+                    user.total_leads,
+                    user.closing_leads,
+                    user.booking_leads
+                ])
+            ]);
+
+            const userPerfOptions = {
+                title: 'User Performance Comparison',
+                titleTextStyle: { fontSize: window.innerWidth < 640 ? 12 : 16, bold: true },
+                chartArea: {
+                    width: window.innerWidth < 640 ? '70%' : '75%',
+                    height: window.innerWidth < 640 ? '65%' : '70%'
+                },
+                colors: ['#3B82F6', '#10B981', '#F97316'],
+                backgroundColor: 'transparent',
+                hAxis: {
+                    title: window.innerWidth < 640 ? '' : 'Users',
+                    titleTextStyle: { fontSize: window.innerWidth < 640 ? 10 : 12 },
+                    textStyle: { fontSize: window.innerWidth < 640 ? 8 : 10 },
+                    slantedText: window.innerWidth < 640,
+                    slantedTextAngle: window.innerWidth < 640 ? 45 : 0
+                },
+                vAxis: {
+                    title: window.innerWidth < 640 ? '' : 'Count',
+                    titleTextStyle: { fontSize: window.innerWidth < 640 ? 10 : 12 },
+                    textStyle: { fontSize: window.innerWidth < 640 ? 8 : 10 }
+                },
+                legend: {
+                    position: 'bottom',
+                    textStyle: { fontSize: window.innerWidth < 640 ? 10 : 12 }
+                }
+            };
+
+            const userPerfChart = new google.visualization.ColumnChart(chartRefs.current.userPerfChart);
+            userPerfChart.draw(userPerfData, userPerfOptions);
+        }
+    };
+
     return (
         <AuthenticatedLayout
             user={auth.user}
@@ -290,26 +554,55 @@ export default function Index({
                     {/* Header with Filters */}
                     <div className="bg-white shadow-sm rounded-xl mb-6" style={{ overflow: 'visible' }}>
                         <div className="p-6 border-b border-gray-200">
-                            <div className="flex items-center justify-between">
+                            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
                                 <div>
-                                    <h1 className="text-2xl font-bold text-gray-900">Reports & Analytics</h1>
-                                    <p className="text-gray-600 mt-1">Comprehensive insights into your CRM performance</p>
+                                    <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Reports & Analytics</h1>
+                                    <p className="text-sm sm:text-base text-gray-600 mt-1">Comprehensive insights into your CRM performance</p>
                                 </div>
-                                <div className="flex space-x-3">
+                                <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-3">
+                                    {/* View Mode Toggle */}
+                                    <div className="inline-flex rounded-lg border border-gray-300 bg-white p-1">
+                                        <button
+                                            onClick={() => setViewMode('table')}
+                                            className={`inline-flex items-center px-2 sm:px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-colors ${
+                                                viewMode === 'table'
+                                                    ? 'bg-blue-100 text-blue-700 shadow-sm'
+                                                    : 'text-gray-700 hover:bg-gray-50'
+                                            }`}
+                                        >
+                                            <TableCellsIcon className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-1.5" />
+                                            <span className="hidden sm:inline">Table</span>
+                                            <span className="sm:hidden">Tbl</span>
+                                        </button>
+                                        <button
+                                            onClick={() => setViewMode('chart')}
+                                            className={`inline-flex items-center px-2 sm:px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-colors ${
+                                                viewMode === 'chart'
+                                                    ? 'bg-blue-100 text-blue-700 shadow-sm'
+                                                    : 'text-gray-700 hover:bg-gray-50'
+                                            }`}
+                                        >
+                                            <Squares2X2Icon className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-1.5" />
+                                            <span className="hidden sm:inline">Charts</span>
+                                            <span className="sm:hidden">Chr</span>
+                                        </button>
+                                    </div>
                                     <button
                                         onClick={() => setIsFilterOpen(!isFilterOpen)}
-                                        className="inline-flex items-center px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                        className="inline-flex items-center px-3 sm:px-4 py-2 bg-white border border-gray-300 rounded-lg text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-50"
                                     >
-                                        <FunnelIcon className="h-4 w-4 mr-2" />
-                                        Filters
+                                        <FunnelIcon className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+                                        <span className="hidden sm:inline">Filters</span>
+                                        <span className="sm:hidden">Filter</span>
                                     </button>
                                     <div className="relative export-dropdown">
                                         <button
                                             onClick={() => setIsExportOpen(!isExportOpen)}
-                                            className="inline-flex items-center px-4 py-2 bg-blue-600 border border-transparent rounded-lg text-sm font-medium text-white hover:bg-blue-700"
+                                            className="inline-flex items-center px-3 sm:px-4 py-2 bg-blue-600 border border-transparent rounded-lg text-xs sm:text-sm font-medium text-white hover:bg-blue-700"
                                         >
-                                            <ArrowDownTrayIcon className="h-4 w-4 mr-2" />
-                                            Export
+                                            <ArrowDownTrayIcon className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+                                            <span className="hidden sm:inline">Export</span>
+                                            <span className="sm:hidden">Exp</span>
                                         </button>
                                         {isExportOpen && (
                                             <div
@@ -380,7 +673,7 @@ export default function Index({
 
                             {/* Filter Form */}
                             {isFilterOpen && (
-                                <form onSubmit={handleFilterSubmit} className="mt-6 grid grid-cols-1 md:grid-cols-4 gap-4 p-4 bg-gray-50 rounded-lg">
+                                <form onSubmit={handleFilterSubmit} className="mt-6 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-gray-50 rounded-lg">
                                     <div>
                                         <label className="block text-sm font-medium text-gray-700 mb-1">From Date</label>
                                         <input
@@ -427,7 +720,7 @@ export default function Index({
                                             ))}
                                         </select>
                                     </div>
-                                    <div className="md:col-span-4 flex justify-end space-x-3">
+                                    <div className="sm:col-span-2 md:col-span-4 flex flex-col sm:flex-row justify-end space-y-2 sm:space-y-0 sm:space-x-3">
                                         <button
                                             type="button"
                                             onClick={() => {
@@ -438,13 +731,13 @@ export default function Index({
                                                     status: '',
                                                 });
                                             }}
-                                            className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                            className="w-full sm:w-auto px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50"
                                         >
                                             Reset
                                         </button>
                                         <button
                                             type="submit"
-                                            className="px-4 py-2 bg-blue-600 border border-transparent rounded-lg text-sm font-medium text-white hover:bg-blue-700"
+                                            className="w-full sm:w-auto px-4 py-2 bg-blue-600 border border-transparent rounded-lg text-sm font-medium text-white hover:bg-blue-700"
                                         >
                                             Apply Filters
                                         </button>
@@ -531,8 +824,8 @@ export default function Index({
                         </div>
                     </div>
 
-                    {/* Stats Cards - Bottom Row (2 cards) */}
-                    <div className="grid grid-cols-2 gap-4 lg:gap-6 mb-6">
+                    {/* Stats Cards - Bottom Row (4 cards) */}
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6 mb-6">
                         <div className="bg-white overflow-hidden shadow-sm rounded-xl p-4 lg:p-6">
                             <div className="flex items-center">
                                 <div className="flex-shrink-0">
@@ -556,157 +849,227 @@ export default function Index({
                                 </div>
                             </div>
                         </div>
+
+                        <div className="bg-white overflow-hidden shadow-sm rounded-xl p-4 lg:p-6">
+                            <div className="flex items-center">
+                                <div className="flex-shrink-0">
+                                    <div className="h-6 w-6 lg:h-8 lg:w-8 rounded-full bg-blue-100 flex items-center justify-center">
+                                        <div className="h-3 w-3 lg:h-4 lg:w-4 rounded-full bg-blue-500"></div>
+                                    </div>
+                                </div>
+                                <div className="ml-3 lg:ml-4">
+                                    <p className="text-xs lg:text-sm font-medium text-gray-600">Cold Leads</p>
+                                    <p className="text-xl lg:text-2xl font-bold text-gray-900">{leadStats.cold_leads}</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-white overflow-hidden shadow-sm rounded-xl p-4 lg:p-6">
+                            <div className="flex items-center">
+                                <div className="flex-shrink-0">
+                                    <div className="h-6 w-6 lg:h-8 lg:w-8 rounded-full bg-red-100 flex items-center justify-center">
+                                        <svg className="h-3 w-3 lg:h-4 lg:w-4 text-red-600" fill="currentColor" viewBox="0 0 20 20">
+                                            <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                                        </svg>
+                                    </div>
+                                </div>
+                                <div className="ml-3 lg:ml-4">
+                                    <p className="text-xs lg:text-sm font-medium text-gray-600">Lost Leads</p>
+                                    <p className="text-xl lg:text-2xl font-bold text-gray-900">{leadStats.lost_leads}</p>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-                        {/* Daily Trends Chart */}
-                        <div className="bg-white overflow-hidden shadow-sm rounded-xl">
-                            <div className="p-6 border-b border-gray-200">
-                                <h3 className="text-lg font-semibold text-gray-900">Daily Lead Trends</h3>
-                                <p className="text-sm text-gray-600">Lead creation and conversion over time</p>
-                            </div>
-                            <div className="p-6">
-                                <div className="space-y-4">
-                                    <div className="max-h-96 overflow-y-auto">
-                                        {dailyTrends.map((trend, index) => (
-                                            <div key={index} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-b-0">
-                                                <div className="flex items-center space-x-3">
-                                                    <CalendarIcon className="h-5 w-5 text-gray-400" />
-                                                    <span className="text-sm font-medium text-gray-900">{trend.formatted_date}</span>
+                    {/* Content based on view mode */}
+                    {viewMode === 'table' ? (
+                        <div className="grid grid-cols-1 gap-4 sm:gap-6 mb-6">
+                            {/* Daily Trends Table */}
+                            <div className="bg-white overflow-hidden shadow-sm rounded-xl">
+                                <div className="p-6 border-b border-gray-200">
+                                    <h3 className="text-lg font-semibold text-gray-900">Daily Lead Trends</h3>
+                                    <p className="text-sm text-gray-600">Lead creation and conversion over time</p>
+                                </div>
+                                <div className="p-6">
+                                    <div className="space-y-4">
+                                        <div className="max-h-96 overflow-y-auto">
+                                            {dailyTrends.map((trend, index) => (
+                                                <div key={index} className="flex flex-col sm:flex-row sm:items-center sm:justify-between py-3 border-b border-gray-100 last:border-b-0 space-y-2 sm:space-y-0">
+                                                    <div className="flex items-center space-x-2 sm:space-x-3">
+                                                        <CalendarIcon className="h-4 w-4 sm:h-5 sm:w-5 text-gray-400 flex-shrink-0" />
+                                                        <span className="text-xs sm:text-sm font-medium text-gray-900">{trend.formatted_date}</span>
+                                                    </div>
+                                                    <div className="grid grid-cols-3 gap-2 sm:flex sm:items-center sm:space-x-4">
+                                                        <div className="text-center sm:text-right">
+                                                            <p className="text-xs text-gray-600">Leads</p>
+                                                            <p className="text-sm sm:text-lg font-semibold text-blue-600">{trend.leads}</p>
+                                                        </div>
+                                                        <div className="text-center sm:text-right">
+                                                            <p className="text-xs text-gray-600">Closing</p>
+                                                            <p className="text-sm sm:text-lg font-semibold text-green-600">{trend.closing}</p>
+                                                        </div>
+                                                        <div className="text-center sm:text-right">
+                                                            <p className="text-xs text-gray-600">Booking</p>
+                                                            <p className="text-sm sm:text-lg font-semibold text-orange-600">{trend.booking}</p>
+                                                        </div>
+                                                    </div>
                                                 </div>
-                                                <div className="flex items-center space-x-4">
-                                                    <div className="text-right">
-                                                        <p className="text-sm text-gray-600">Leads</p>
-                                                        <p className="text-lg font-semibold text-blue-600">{trend.leads}</p>
+                                            ))}
+                                        </div>
+                                        {dailyTrends.length === 0 && (
+                                            <div className="text-center py-8 text-gray-500">
+                                                <CalendarIcon className="h-12 w-12 mx-auto mb-2 text-gray-300" />
+                                                <p>No data available for the selected date range</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Status Distribution Table */}
+                            <div className="bg-white overflow-hidden shadow-sm rounded-xl">
+                                <div className="p-6 border-b border-gray-200">
+                                    <h3 className="text-lg font-semibold text-gray-900">Status Distribution</h3>
+                                    <p className="text-sm text-gray-600">Lead status breakdown</p>
+                                </div>
+                                <div className="p-6">
+                                    <div className="space-y-4">
+                                        {statusDistribution.map((status, index) => {
+                                            const percentage = leadStats.total_leads > 0
+                                                ? Math.round((status.count / leadStats.total_leads) * 100)
+                                                : 0;
+                                            return (
+                                                <div key={index} className="flex items-center justify-between">
+                                                    <div className="flex items-center space-x-3">
+                                                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(status.status)}`}>
+                                                            {status.label}
+                                                        </span>
                                                     </div>
-                                                    <div className="text-right">
-                                                        <p className="text-sm text-gray-600">Closing</p>
-                                                        <p className="text-lg font-semibold text-green-600">{trend.closing}</p>
+                                                    <div className="flex items-center space-x-3">
+                                                        <div className="w-24 bg-gray-200 rounded-full h-2">
+                                                            <div
+                                                                className="bg-blue-600 h-2 rounded-full"
+                                                                style={{ width: `${percentage}%` }}
+                                                            ></div>
+                                                        </div>
+                                                        <span className="text-sm font-medium text-gray-900 w-12 text-right">
+                                                            {status.count}
+                                                        </span>
                                                     </div>
-                                                    <div className="text-right">
-                                                        <p className="text-sm text-gray-600">Booking</p>
-                                                        <p className="text-lg font-semibold text-orange-600">{trend.booking}</p>
-                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-1 gap-4 sm:gap-6 mb-6">
+                            {/* Lead Statistics Chart */}
+                            <div className="bg-white overflow-hidden shadow-sm rounded-xl">
+                                <div className="p-6 border-b border-gray-200">
+                                    <h3 className="text-lg font-semibold text-gray-900">Lead Statistics by Priority</h3>
+                                    <p className="text-sm text-gray-600">Distribution of leads across all priorities</p>
+                                </div>
+                                <div className="p-6">
+                                    {googleChartsLoaded && viewMode === 'chart' ? (
+                                        <div
+                                            ref={(el) => { chartRefs.current.leadStatsChart = el; }}
+                                            className="w-full h-64 sm:h-80 lg:h-96"
+                                        ></div>
+                                    ) : viewMode === 'chart' ? (
+                                        <div className="flex items-center justify-center h-64 sm:h-80">
+                                            <div className="text-center">
+                                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                                                <p className="text-sm text-gray-500">Loading chart...</p>
+                                            </div>
+                                        </div>
+                                    ) : null}
+                                </div>
+                            </div>
+
+                            {/* Daily Trends Chart */}
+                            <div className="bg-white overflow-hidden shadow-sm rounded-xl">
+                                <div className="p-6 border-b border-gray-200">
+                                    <h3 className="text-lg font-semibold text-gray-900">Daily Lead Trends</h3>
+                                    <p className="text-sm text-gray-600">Lead creation and conversion over time</p>
+                                </div>
+                                <div className="p-6">
+                                    {googleChartsLoaded && viewMode === 'chart' ? (
+                                        <div
+                                            ref={(el) => { chartRefs.current.dailyTrendsChart = el; }}
+                                            className="w-full h-64 sm:h-80 lg:h-96"
+                                        ></div>
+                                    ) : viewMode === 'chart' ? (
+                                        <div className="flex items-center justify-center h-64 sm:h-80">
+                                            <div className="text-center">
+                                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                                                <p className="text-sm text-gray-500">Loading chart...</p>
+                                            </div>
+                                        </div>
+                                    ) : null}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Bottom Section - Performance Data */}
+                    {viewMode === 'table' ? (
+                        <div className="grid grid-cols-1 gap-4 sm:gap-6">
+                            {/* Top Performers */}
+                            <div className="bg-white overflow-hidden shadow-sm rounded-xl">
+                                <div className="p-6 border-b border-gray-200">
+                                    <h3 className="text-lg font-semibold text-gray-900">Top Performers</h3>
+                                    <p className="text-sm text-gray-600">Highest converting team members</p>
+                                </div>
+                                <div className="p-6">
+                                    <div className="space-y-4">
+                                        {topPerformers.map((performer) => (
+                                            <div key={performer.id} className="flex items-center space-x-3">
+                                                <div className="flex-shrink-0">
+                                                    {performer.profile_picture ? (
+                                                        <img
+                                                            className="h-10 w-10 rounded-full object-cover"
+                                                            src={`/storage/${performer.profile_picture}`}
+                                                            alt={performer.name}
+                                                        />
+                                                    ) : (
+                                                        <div className="h-10 w-10 rounded-full bg-gray-300 flex items-center justify-center">
+                                                            <UserGroupIcon className="h-6 w-6 text-gray-600" />
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <div className="flex-1 min-w-0">
+                                                    <p className="text-sm font-medium text-gray-900 truncate">{performer.name}</p>
+                                                    <p className="text-xs text-gray-500 truncate">{performer.email}</p>
+                                                </div>
+                                                <div className="text-right">
+                                                    <p className="text-sm font-semibold text-green-600">{performer.conversion_rate}%</p>
+                                                    <p className="text-xs text-gray-500">{performer.converted_leads}/{performer.total_leads}</p>
                                                 </div>
                                             </div>
                                         ))}
                                     </div>
-                                    {dailyTrends.length === 0 && (
-                                        <div className="text-center py-8 text-gray-500">
-                                            <CalendarIcon className="h-12 w-12 mx-auto mb-2 text-gray-300" />
-                                            <p>No data available for the selected date range</p>
-                                        </div>
-                                    )}
                                 </div>
                             </div>
-                        </div>
 
-                        {/* Status Distribution */}
-                        <div className="bg-white overflow-hidden shadow-sm rounded-xl">
-                            <div className="p-6 border-b border-gray-200">
-                                <h3 className="text-lg font-semibold text-gray-900">Status Distribution</h3>
-                                <p className="text-sm text-gray-600">Lead status breakdown</p>
-                            </div>
-                            <div className="p-6">
-                                <div className="space-y-4">
-                                    {statusDistribution.map((status, index) => {
-                                        const percentage = leadStats.total_leads > 0
-                                            ? Math.round((status.count / leadStats.total_leads) * 100)
-                                            : 0;
-                                        return (
-                                            <div key={index} className="flex items-center justify-between">
-                                                <div className="flex items-center space-x-3">
-                                                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(status.status)}`}>
-                                                        {status.label}
-                                                    </span>
-                                                </div>
-                                                <div className="flex items-center space-x-3">
-                                                    <div className="w-24 bg-gray-200 rounded-full h-2">
-                                                        <div
-                                                            className="bg-blue-600 h-2 rounded-full"
-                                                            style={{ width: `${percentage}%` }}
-                                                        ></div>
-                                                    </div>
-                                                    <span className="text-sm font-medium text-gray-900 w-12 text-right">
-                                                        {status.count}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
+                            {/* User Performance Table */}
+                            <div className="bg-white overflow-hidden shadow-sm rounded-xl">
+                                <div className="p-4 sm:p-6 border-b border-gray-200">
+                                    <h3 className="text-lg font-semibold text-gray-900">User Performance</h3>
+                                    <p className="text-sm text-gray-600">Detailed performance metrics by user</p>
                                 </div>
-                            </div>
-                        </div>
-                    </div>
 
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        {/* Top Performers */}
-                        <div className="bg-white overflow-hidden shadow-sm rounded-xl">
-                            <div className="p-6 border-b border-gray-200">
-                                <h3 className="text-lg font-semibold text-gray-900">Top Performers</h3>
-                                <p className="text-sm text-gray-600">Highest converting team members</p>
-                            </div>
-                            <div className="p-6">
-                                <div className="space-y-4">
-                                    {topPerformers.map((performer) => (
-                                        <div key={performer.id} className="flex items-center space-x-3">
-                                            <div className="flex-shrink-0">
-                                                {performer.profile_picture ? (
-                                                    <img
-                                                        className="h-10 w-10 rounded-full object-cover"
-                                                        src={`/storage/${performer.profile_picture}`}
-                                                        alt={performer.name}
-                                                    />
-                                                ) : (
-                                                    <div className="h-10 w-10 rounded-full bg-gray-300 flex items-center justify-center">
-                                                        <UserGroupIcon className="h-6 w-6 text-gray-600" />
-                                                    </div>
-                                                )}
-                                            </div>
-                                            <div className="flex-1 min-w-0">
-                                                <p className="text-sm font-medium text-gray-900 truncate">{performer.name}</p>
-                                                <p className="text-xs text-gray-500 truncate">{performer.email}</p>
-                                            </div>
-                                            <div className="text-right">
-                                                <p className="text-sm font-semibold text-green-600">{performer.conversion_rate}%</p>
-                                                <p className="text-xs text-gray-500">{performer.converted_leads}/{performer.total_leads}</p>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* User Performance Table */}
-                        <div className="lg:col-span-2 bg-white overflow-hidden shadow-sm rounded-xl">
-                            <div className="p-6 border-b border-gray-200">
-                                <h3 className="text-lg font-semibold text-gray-900">User Performance</h3>
-                                <p className="text-sm text-gray-600">Detailed performance metrics by user</p>
-                            </div>
-                            <div className="overflow-x-auto">
-                                <table className="min-w-full divide-y divide-gray-200">
-                                    <thead className="bg-gray-50">
-                                        <tr>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Closing</th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Booking</th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rate</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="bg-white divide-y divide-gray-200">
+                                {/* Mobile Card Layout */}
+                                <div className="block sm:hidden">
+                                    <div className="divide-y divide-gray-200">
                                         {userPerformance.slice(0, 10).map((user) => (
-                                            <tr key={user.id} className="hover:bg-gray-50">
-                                                <td className="px-6 py-4 whitespace-nowrap">
+                                            <div key={user.id} className="p-4">
+                                                <div className="flex items-center justify-between mb-2">
                                                     <div>
-                                                        <div className="text-sm font-medium text-gray-900">{user.name}</div>
-                                                        <div className="text-sm text-gray-500">{user.email}</div>
+                                                        <h4 className="text-sm font-medium text-gray-900">{user.name}</h4>
+                                                        <p className="text-xs text-gray-500">{user.email}</p>
                                                     </div>
-                                                </td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{user.total_leads}</td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-green-600 font-medium">{user.closing_leads}</td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-blue-600 font-medium">{user.booking_leads}</td>
-                                                <td className="px-6 py-4 whitespace-nowrap">
                                                     <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
                                                         user.conversion_rate >= 20 ? 'bg-green-100 text-green-800' :
                                                         user.conversion_rate >= 10 ? 'bg-yellow-100 text-yellow-800' :
@@ -714,14 +1077,115 @@ export default function Index({
                                                     }`}>
                                                         {user.conversion_rate}%
                                                     </span>
-                                                </td>
-                                            </tr>
+                                                </div>
+                                                <div className="grid grid-cols-3 gap-4 mt-3">
+                                                    <div className="text-center">
+                                                        <p className="text-xs text-gray-500">Total</p>
+                                                        <p className="text-sm font-semibold text-gray-900">{user.total_leads}</p>
+                                                    </div>
+                                                    <div className="text-center">
+                                                        <p className="text-xs text-gray-500">Closing</p>
+                                                        <p className="text-sm font-semibold text-green-600">{user.closing_leads}</p>
+                                                    </div>
+                                                    <div className="text-center">
+                                                        <p className="text-xs text-gray-500">Booking</p>
+                                                        <p className="text-sm font-semibold text-blue-600">{user.booking_leads}</p>
+                                                    </div>
+                                                </div>
+                                            </div>
                                         ))}
-                                    </tbody>
-                                </table>
+                                    </div>
+                                </div>
+
+                                {/* Desktop Table Layout */}
+                                <div className="hidden sm:block overflow-x-auto">
+                                    <table className="min-w-full divide-y divide-gray-200">
+                                        <thead className="bg-gray-50">
+                                            <tr>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Closing</th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Booking</th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rate</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="bg-white divide-y divide-gray-200">
+                                            {userPerformance.slice(0, 10).map((user) => (
+                                                <tr key={user.id} className="hover:bg-gray-50">
+                                                    <td className="px-6 py-4 whitespace-nowrap">
+                                                        <div>
+                                                            <div className="text-sm font-medium text-gray-900">{user.name}</div>
+                                                            <div className="text-sm text-gray-500">{user.email}</div>
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{user.total_leads}</td>
+                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-green-600 font-medium">{user.closing_leads}</td>
+                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-blue-600 font-medium">{user.booking_leads}</td>
+                                                    <td className="px-6 py-4 whitespace-nowrap">
+                                                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                                                            user.conversion_rate >= 20 ? 'bg-green-100 text-green-800' :
+                                                            user.conversion_rate >= 10 ? 'bg-yellow-100 text-yellow-800' :
+                                                            'bg-red-100 text-red-800'
+                                                        }`}>
+                                                            {user.conversion_rate}%
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
                         </div>
-                    </div>
+                    ) : (
+                        <div className="grid grid-cols-1 gap-4 sm:gap-6">
+                            {/* Status Distribution Chart */}
+                            <div className="bg-white overflow-hidden shadow-sm rounded-xl">
+                                <div className="p-6 border-b border-gray-200">
+                                    <h3 className="text-lg font-semibold text-gray-900">Status Distribution</h3>
+                                    <p className="text-sm text-gray-600">Lead status breakdown</p>
+                                </div>
+                                <div className="p-6">
+                                    {googleChartsLoaded && viewMode === 'chart' ? (
+                                        <div
+                                            ref={(el) => { chartRefs.current.statusDistChart = el; }}
+                                            className="w-full h-64 sm:h-80 lg:h-96"
+                                        ></div>
+                                    ) : viewMode === 'chart' ? (
+                                        <div className="flex items-center justify-center h-64 sm:h-80">
+                                            <div className="text-center">
+                                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                                                <p className="text-sm text-gray-500">Loading chart...</p>
+                                            </div>
+                                        </div>
+                                    ) : null}
+                                </div>
+                            </div>
+
+                            {/* User Performance Chart */}
+                            <div className="bg-white overflow-hidden shadow-sm rounded-xl">
+                                <div className="p-6 border-b border-gray-200">
+                                    <h3 className="text-lg font-semibold text-gray-900">User Performance</h3>
+                                    <p className="text-sm text-gray-600">Top 10 users performance comparison</p>
+                                </div>
+                                <div className="p-6">
+                                    {googleChartsLoaded && viewMode === 'chart' ? (
+                                        <div
+                                            ref={(el) => { chartRefs.current.userPerfChart = el; }}
+                                            className="w-full h-64 sm:h-80 lg:h-96"
+                                        ></div>
+                                    ) : viewMode === 'chart' ? (
+                                        <div className="flex items-center justify-center h-64 sm:h-80">
+                                            <div className="text-center">
+                                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                                                <p className="text-sm text-gray-500">Loading chart...</p>
+                                            </div>
+                                        </div>
+                                    ) : null}
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     {/* Recent Activities */}
                     <div className="mt-6 bg-white overflow-hidden shadow-sm rounded-xl">
